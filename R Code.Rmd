@@ -1,0 +1,289 @@
+---
+title: "IDS 572 Assignment 3"
+author: "Vipul Aggarwal"
+date: "11/6/2019"
+output: word_document
+---
+
+(f) Use the sample data provided to develop a Random Forest model. Comment on the model
+development and accuracy of the model.
+```{r 01}
+Training <- read.csv("D:/Fall 2019/Data Mining/Assignment 3/IMB 623 VMWare- Digital Buyer Journey/Training.csv")
+traindata<-Training[,-1]
+library(randomForest)
+traindata$target<-as.factor(traindata$target)
+attach(traindata)
+
+#Finding % of 9999 values in each variable
+data9999 <- cbind(names(traindata),
+                  sapply(traindata,function (x)
+                                    { row1 = which(x==9999)
+                                      length(row1)/nrow(Training)
+                                    } ))
+#Removing features with 70% or more 9999 values
+col9999 <- which(data9999[,2]>0.7)
+y<- traindata[,-col9999]
+
+#Finding % of Unknown values in each variable
+dataUnknown <- cbind(names(y),
+                  sapply(y,function (x)
+                                    { row1 = which(x=='Unknown')
+                                      length(row1)/nrow(Training)
+                                    } ))
+#Removing features with 70% or more Unknown values
+colUnknown <- which(dataUnknown[,2]>0.7)
+y<- y[,-colUnknown]
+
+#Removing features with 70% or more NA values
+x <- y[ lapply( y, function(x) sum(is.na(x)) / length(x) ) < 0.3 ]
+
+
+#Removing features that have zero variance (constant values)
+zerovariancepredlist = apply(x, 2, function(x) length(unique(x))== 1 )
+tdata = x[,!zerovariancepredlist]
+
+
+
+```
+
+```{r }
+#Separating numerical features
+col_list <- unlist(lapply(tdata, is.numeric))
+num_data <- tdata[ , col_list]
+
+#Separating categorical features
+col_list1 <- unlist(lapply(tdata, is.factor))
+cat_data <- tdata[ , col_list1]
+
+```
+
+```{r }
+#Keeping extra classes in the categorical variables as Other
+
+cat_data1 <- matrix(0, nrow = nrow(cat_data), ncol = ncol(cat_data))
+
+for(j in 1:(ncol(cat_data)-1))
+{
+value <- data.frame(sort(table(cat_data[,j]),decreasing=TRUE))$Var1[1:30]
+for( i in 1:nrow(cat_data))
+{
+cat_data1[i,j] <- if(is.na(match(cat_data[i,j],value))){'Other'} else {as.character(cat_data[i,j])}
+}
+}
+colnames(cat_data1) <- colnames(cat_data)
+
+cat_data1 <- data.frame(cat_data1[,1:6])
+
+
+
+#cat_data$city <- data.frame(sort(table(cat_data$db_city),decreasing=TRUE))$Freq<50) {'Other'}
+```
+
+```{r}
+
+library(caret)
+#Checking pair-wise correlation and keeping only one out of highly correlated pairs with 90% cutoff.
+correlationmat = cor(num_data[,1:ncol(num_data)])
+highlycorrelatedmat = unlist(findCorrelation(correlationmat,cutoff = 0.9))
+vecind = c()
+for (i in 1:length(highlycorrelatedmat)){
+  vecind = c(vecind,i)
+}
+num_data_new = num_data[,-vecind]
+
+#Finding the top 100 important features using gini index score
+fdata <- data.frame(target,num_data_new)
+library(ranger)
+set.seed(1254)
+rf <- ranger(target ~ ., data = fdata, num.trees = 300, write.forest = TRUE, importance = "impurity")
+
+varimpmat <- data.frame(names(fdata[,-1]),rf$variable.importance)
+colnames(varimpmat)<-c("Variable","GiniIndex")
+
+finalnumvar <- varimpmat[order(-varimpmat$GiniIndex),][1:100,]
+
+finalnumdata <- fdata[,unlist(finalnumvar$Variable)]
+
+```
+
+```{r}
+#Data Normalization
+
+new_num_data <- data.frame(scale(finalnumdata,center=TRUE,scale=TRUE))
+
+target <- as.factor(Training$target)
+
+#Combining numerical and categorical variables
+finaldata <- data.frame(cbind(target,new_num_data))
+#finaldata <- data.frame(cbind(finaldata,cat_data1))
+
+#Treating the target imbalance by having equal distribution for all classes
+library(UBL)
+#p1 <- data.frame(target,new_num_data)
+table(finaldata$target)
+samp <- SmoteClassif(target~., finaldata, C.perc = "balance", k = 5, repl = FALSE,dist = "HEOM", p = 2)
+table(samp$target) 
+samp$target <- as.factor(samp$target)
+```
+
+
+```{r}
+
+library(randomForest)
+rf_model <- randomForest(target~.,samp,mtry=sqrt(ncol(samp)-1),ntree=100, replace= T, importance = T,na.action = na.omit)
+```
+
+```{r}
+
+samp$target <- as.factor(samp$target)
+
+xTest <- read.csv("D:/Fall 2019/Data Mining/Assignment 3/IMB 623 VMWare- Digital Buyer Journey/Validation.csv")
+xTest = xTest[,-1]
+xTest$target <- as.factor(xTest$target)
+cl <- unlist(lapply(xTest, is.numeric))
+num_dataT <- xTest[ , cl]
+
+#Normalizing the validation data
+s2 <- data.frame(scale(num_dataT,center=TRUE,scale=TRUE))
+s2 <- data.frame(cbind(s2,xTest[ , !cl]))
+
+
+col_final_list <- data.frame(colnames(finaldata))
+final_cols_train <- unlist(sapply(col_final_list[,1], call_index , s2))
+
+test_data_bor <-data.frame(s2[,final_cols_train])
+
+test_data_bor_s <- data.frame(cbind(finalnumdata_v,target ))
+test_data_bor_s$target <- as.factor(finalnumdata_v$target)
+
+#s2$target <- factor(s2$target, levels = levels(samp$target))
+
+```
+
+
+```{r}
+#s2$target <- factor(s2$target, levels = levels(samp$target))
+
+#Predicting Test data based on RF model
+test_prediction <- predict(rf_model,s2, type="response")
+
+#Confusion matrix for Random Forest model
+confustionmatrix_p = table(test_prediction,s2$target)
+confustionmatrix_p
+accuracy_rf_p <- sum(diag(confustionmatrix_p))/sum(confustionmatrix_p)
+accuracy_rf_p
+```
+We get 96.8% accuracy through random forest.
+
+(g) How different are regularized logistic regression models from standard logistic regression models? When should L1, L2 regularization be used to model the data? Develop a regularized logistic regression model on the given sample data. What insights do you obtain from this model?
+
+
+```{r}
+
+s = samp[,-1]
+yTrain = samp$target
+
+# Find the best model
+library(LiblineaR)
+tryTypes <- c(0,6,7)
+bestAcc <- 0
+bestType <- NA
+
+    
+acclog <- LiblineaR(data=s, target=yTrain, type=0, cost=1000, verbose=FALSE)
+accL1 <- LiblineaR(data=s, target=yTrain, type=7, cost=1000, verbose=FALSE)
+accL2 <- LiblineaR(data=s, target=yTrain, type=6, cost=1000, verbose=FALSE)
+    
+
+
+# Re-train best model with best cost value.
+m <- LiblineaR(data=s,target=yTrain,type=7,cost=1000)
+
+
+# Make prediction
+p <- predict(m,s2)
+p
+
+# Display confusion matrix
+res <- table(p$predictions,s2$target)
+print(res)
+
+accuracy <- sum(diag(res))/sum(res)
+accuracy
+```
+
+(h) Develop a couple of extreme gradient boosting models with different values for parameters
+(depth, eta, etc.) Discuss how the models differ from each other.
+
+We ran xgboost models with different values of parameters like learning rate, evaluation metric, eta, depth of trees. We observe that after tuning learning, accuracy increase to an extent but if we keep varying learning rate, It leads to overfitiing of data. The model with best parameter give 97.328300% accuracy on Validation dataset below. 
+
+```{r 098}
+# Packages
+library(xgboost)
+library(magrittr)
+library(dplyr)
+library(Matrix)
+
+trn_data <- finaldata
+tst_data <- test_data_bor_s
+
+trn_data$target <- as.integer(finaldata$target)
+tst_data$target <- as.integer(test_data_bor_s$target)
+
+n = nrow(samp)
+train.data = as.matrix(trn_data)
+train_label <- trn_data$target -1
+
+test.data = as.matrix(tst_data)
+test_label <- tst_data$target -1
+
+```
+
+
+```{r 876}
+# Transform the two data sets into xgb.Matrix
+xgb.train = xgb.DMatrix(data=train.data,label=train_label)
+xgb.test = xgb.DMatrix(data=test.data,label=test_label)
+
+nc <- length(unique(train_label))
+xgb_params <- list("objective" = "multi:softprob",
+                   "eval_metric" = "mlogloss",
+                   "num_class" = nc)
+watchlist <- list(train = xgb.train, test = xgb.test)
+
+# eXtreme Gradient Boosting Model
+bst_model <- xgb.train(
+                       data = xgb.train,
+                       nrounds = 10,
+                       watchlist = watchlist,
+                       eta = 0.001,
+                       max.depth = 3,
+                       eval_metric = "merror",
+ objective = "multi:softprob",
+ num_class = 6,
+ nthread = 3
+                       )
+
+
+# Cross Validatin
+cv <- xgb.cv(data = xgb.train, nrounds = 5, nthread = 2, nfold = 5, metrics = list("mlogloss"),
+                  max_depth = 3, eta = 1, objective = "multi:softprob", num_class = 6)
+
+```
+
+```{r 9876}
+
+xgb.pred = predict(bst_model,xgb.test)
+xgb.pred = as.data.frame(xgb.pred)
+colnames(xgb.pred) = levels(target)
+
+# Use the predicted label with the highest probability
+xgb.pred$prediction = apply(xgb.pred,1,function(x) colnames(xgb.pred)[which.max(x)])
+xgb.pred$label = levels(target)[train_label+1]
+
+# Calculate the final accuracy
+result = sum(xgb.pred$prediction==xgb.pred$label)/nrow(xgb.pred)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result)))
+
+```
+
