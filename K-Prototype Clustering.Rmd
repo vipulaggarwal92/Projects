@@ -1,0 +1,121 @@
+---
+title: "IDS 572 Assignment 5"
+author: "Vipul Aggarwal"
+date: "12/1/2019"
+output: word_document
+---
+
+Q3. Download the file prospects.csv and load it into R.
+In your clustering model exclude the fields LOCATION and ID. Use R to answer the questions below.
+
+(a) Use the K-means method to cluster the prospects dataset. Set the number of clusters to four. How many points are in each cluster? What are cluster means and variances?
+```{r }
+library(readxl)
+data <- read_excel("D:/Fall 2019/Data Mining/Assignment 5/prospect.xls")
+clust_data <- subset(data, select=-c(ID,LOC))
+
+#Checking the number of rows with missing data
+sum(is.na(clust_data))
+
+clust_data_na <- data.frame(na.omit(clust_data))
+
+dim(clust_data)
+dim(clust_data_na)
+```
+We load the data and remove the missing values since the missing instances are very less compared to theoriginal data. We now convert the categorical features into factors and scale the numerical features.
+
+```{r }
+str(clust_data_na)
+
+clust_data_final = clust_data_na
+#Coverting relevant variables into factors
+clust_data_final[,3] <- as.factor(clust_data_na[,3])
+clust_data_final[,4] <- as.factor(clust_data_na[,4])
+clust_data_final[,5] <- as.factor(clust_data_na[,5])
+clust_data_final[,6] <- as.factor(clust_data_na[,6])
+clust_data_final[,7] <- as.factor(clust_data_na[,7])
+
+str(clust_data_final)
+
+#Separating numerical variables and scaling them
+mins <- apply(clust_data_final[,1:2], 2, min)
+maxs <- apply(clust_data_final[,1:2], 2, max)
+scaled_data <- as.data.frame(scale(clust_data_final[,1:2], center = mins, scale = (maxs-mins)))
+summary(scaled_data)
+
+scaled_data_final <- cbind(scaled_data,clust_data_final[,3:7])
+```
+
+We now run K-Prototype to find the clusters since the data has both categorical and numerical features.
+
+```{r }
+library(e1071)
+
+set.seed(1234)
+
+library(clustMixType)
+kmeans_model <- kproto(scaled_data_final,k=4, nstart = 20)
+
+#Size of each cluster
+kmeans_model$size
+#centroids 
+kmeans_model$centers
+```
+The number of points in 4 clusters are 964, 1359, 942 and 1330.
+
+(b) For each of the four clusters, briefly describe the characteristics of members of that cluster.
+
+Ans - Comparing the centers of all four clusters, we can see that 'Climate' has the same value which means that this variable is not very significant in clustering process.
+We will also compare the age and income values to their original values since these are scaled values.
+
+Based on centers of the 4 clusters:
+Cluster 1
+Likely to be married, all male, owns a home, Age mean: 37
+Likely to live in Climate Zone 20, Income mean: 47.49, FICO Score>=700
+
+Cluster 2
+Likely to be not married, all male, doesn't own a home, Age mean: 21
+Likely to live in Climate Zone 20, Income mean: 37.35, FICO Score<700
+
+Cluster 3
+Likely to be married, all male, doesn't own a home, Age mean: 39
+Likely to live in Climate Zone 20, Income mean: 49.76, FICO Score>=700
+
+Cluster 4
+Likely to be married, all female, doesn't own a home, Age mean: 42
+Likely to live in Climate Zone 20, Income mean: 21.81, FICO Score<700
+
+
+(c) What is the best value of k for this data set??
+
+```{r }
+bestkplot <- function(data, nc=25, seed=1234)
+{
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  
+  for (i in 2:nc)
+  {
+    set.seed(seed)
+    wss[i] <- sum(kproto(data, k=i)$withinss)
+  }
+  
+  plot(1:nc, wss, type="b", xlab="Number of Clusters",ylab="Within groups sum of squares")
+}
+
+bestkplot(scaled_data_final, nc=25) 
+```
+Based on the screeplot above, we can see that maximum reduction in variance within clusters is at k=4.
+
+(d) What is the Silhouette measure of the clusters obtained by best k in part (c).
+
+Ans - We find out the Silhouette coefficients for the four clusters and plot them below. We observe positive values for all clusters except the last one.
+
+```{r }
+library(cluster)
+library(factoextra)
+
+set.seed(1234)
+k_means_model_best_k <- kproto(scaled_data_final, k=4)
+sil_coeff <- silhouette(k_means_model_best_k$cluster, dist(scaled_data_final))
+fviz_silhouette(sil_coeff)
+```
